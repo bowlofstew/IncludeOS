@@ -1,115 +1,66 @@
-#! /bin/bash
-. ./etc/set_traps.sh
+#!/bin/sh
 
-export BUILD_DIR=$HOME/IncludeOS_build
-export TEMP_INSTALL_DIR=$BUILD_DIR/IncludeOS_TEMP_install
+# OPTIONS:
+#
+# Location of the IncludeOS repo (assumes current folder if not defined), e.g.:
+# $ export INCLUDEOS_SRC=your/github/cloned/IncludeOS
+export INCLUDEOS_SRC=${INCLUDEOS_SRC-`pwd`}
 
-export INSTALL_DIR=$HOME/IncludeOS_install
-export PREFIX=$TEMP_INSTALL_DIR
-export TARGET=i686-elf
-export PATH="$PREFIX/bin:$PATH"
-export build_dir=$HOME/cross-dev
+SYSTEM=`uname -s`
 
-# Multitask-parameter to make
-export num_jobs=-j$((`lscpu -p | tail -1 | cut -d',' -f1` + 1 ))
+RELEASE=$([ $SYSTEM = "Darwin" ] && echo `sw_vers -productVersion` || echo `lsb_release -is`)
 
-export newlib_version=2.2.0-1
+check_os_support() {
+    SYSTEM=$1
+    RELEASE=$2
 
-export IncludeOS_src=`pwd`
-export newlib_inc=$TEMP_INSTALL_DIR/i686-elf/include
-export llvm_src=llvm
-export llvm_build=build_llvm
-export clang_version=3.6
+    case $SYSTEM in
+        "Darwin")
+            return 0;
+            ;;
+        "Linux")
+            case $RELEASE in
+                "Ubuntu")
+                    return 0;
+                    ;;
+                "Fedora")
+                    export INCLUDEOS_SRC=`pwd`
+                    return 0;
+                    ;;
+            esac
+    esac
+    return 1;
+}
 
-export gcc_version=5.1.0
-export binutils_version=2.25
-
-# Options to skip steps
-[ ! -v do_binutils ] && do_binutils=1
-[ ! -v do_gcc ] && do_gcc=1
-[ ! -v do_newlib ] && do_newlib=1
-[ ! -v do_includeos ] &&  do_includeos=1
-[ ! -v do_llvm ] &&  do_llvm=1
-# TODO: These should be determined by inspecting if local llvm repo is up-to-date
-
-[ ! -v install_llvm_dependencies ] &&  export install_llvm_dependencies=1
-[ ! -v download_llvm ] && export download_llvm=1
-
-
-
-# BUILDING IncludeOS
-PREREQS_BUILD="build-essential make nasm texinfo clang-$clang_version clang++-$clang_version"
-
-echo -e "\n\n >>> Trying to install prerequisites for *building* IncludeOS"
-echo -e  "        Packages: $PREREQS_BUILD \n"
-sudo apt-get install -y $PREREQS_BUILD
-
-mkdir -p $BUILD_DIR
-cd $BUILD_DIR
-
-if [ ! -z $do_binutils ]; then
-    echo -e "\n\n >>> GETTING / BUILDING binutils (Required for libgcc / unwind / crt) \n"
-    $IncludeOS_src/etc/build_binutils.sh
+# check if system is supported at all
+if ! check_os_support $SYSTEM $RELEASE; then
+    echo -e ">>> Sorry <<< \n\
+Currently only Ubuntu, Fedora and OSX are actively supported for *building* IncludeOS. \n\
+On other Linux distros it shouldn't be that hard to get it to work - take a look at\n \
+./etc/install_from_bundle.sh \n"
+    exit 1
 fi
 
-if [ ! -z $do_gcc ]; then
-    echo -e "\n\n >>> GETTING / BUILDING GCC COMPILER (Required for libgcc / unwind / crt) \n"
-    $IncludeOS_src/etc/cross_compiler.sh
+# now install build requirements (compiler, etc). This was moved into
+# a function of its own as it can easen the setup.
+./etc/install_build_requirements.sh $SYSTEM $RELEASE
+
+# if the --all-source parameter was given, build it the hard way
+if [ "$1" = "--all-source" ]; then
+    echo ">>> Installing everything from source"
+    ./etc/install_all_source.sh
+elif [ "Darwin" = "$SYSTEM" ]; then
+        # TODO: move build dependencies to the install build requirements step
+        ./etc/install_osx.sh
+elif [ "Linux" = "$SYSTEM" ]; then
+
+    echo -e "\n\n>>> Calling install_from_bundle.sh script"
+    ./etc/install_from_bundle.sh
+
+    echo -e "\n\n>>> Creating a virtual network, i.e. a bridge. (Requires sudo)"
+    sudo ./etc/create_bridge.sh
+
+    echo -e "\n\n>>> Done! Test your installation with ./test.sh"
 fi
 
-if [ ! -z $do_newlib ]; then
-    echo -e "\n\n >>> GETTING / BUILDING NEWLIB \n"
-    $IncludeOS_src/etc/build_newlib.sh
-fi
-
-if [ ! -z $do_llvm ]; then
-    echo -e "\n\n >>> GETTING / BUILDING llvm / libc++ \n"
-    $IncludeOS_src/etc/build_llvm32.sh
-    #echo -e "\n\n >>> INSTALLING libc++ \n"
-    #cp $BUILD_DIR/$llvm_build/lib/libc++.a $INSTALL_DIR/lib/
-fi
-
-echo -e "\n >>> DEPENDENCIES SUCCESSFULLY BUILT. Creating binary bundle \n"
-$IncludeOS_src/etc/create_binary_bundle.sh
-
-
-if [ ! -z $do_includeos ]; then
-    # Build and install the vmbuilder 
-    echo -e "\n >>> Installing vmbuilder"
-    pushd $IncludeOS_src/vmbuild
-    make 
-    cp vmbuild $INSTALL_DIR/
-    popd
-    
-    echo -e "\n >>> Building IncludeOS"
-    pushd $IncludeOS_src/src
-    make $num_jobs
-        
-    echo -e "\n >>> Linking IncludeOS test-service"
-    make test
-    
-    echo -e "\n >>> Installing IncludeOS"
-    make install
-
-    popd
-   
-    
-    # RUNNING IncludeOS
-    PREREQS_RUN="bridge-utils qemu-kvm"
-    echo -e "\n\n >>> Trying to install prerequisites for *running* IncludeOS"
-    echo -e   "        Packages: $PREREQS_RUN \n"
-    sudo apt-get install -y $PREREQS_RUN
-    
-    # Set up the IncludeOS network bridge
-    echo -e "\n\n >>> Create IncludeOS network bridge  *Requires sudo* \n"
-    sudo $IncludeOS_src/etc/create_bridge.sh
-    
-    # Copy qemu-ifup til install loc.
-    mkdir -p $INSTALL_DIR/etc
-    cp $IncludeOS_src/etc/qemu-ifup $INSTALL_DIR/etc/
-    cp $IncludeOS_src/etc/qemu_cmd.sh $INSTALL_DIR/etc/
-fi
-
-echo -e "\n >>> Done. Test the installation by running ./test.sh \n"
-
-trap - EXIT
+exit 0

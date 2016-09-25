@@ -6,62 +6,65 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// 
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#pragma once
 #ifndef NET_DHCP_DH4CLIENT_HPP
 #define NET_DHCP_DH4CLIENT_HPP
 
-#define DEBUG
+#include <timers>
 #include "../packet.hpp"
-
-#include <debug>
-#include <info>
 
 namespace net
 {
-  template <typename T>
-  class Socket;
-  class UDP;
-  
+  class UDPSocket;
+
   template <typename LINK, typename IPV>
   class Inet;
-  
+
   class DHClient
   {
   public:
     using Stack = Inet<LinkLayer, IP4>;
-    using On_config = delegate<void(Stack&)>;
-    
+    using config_func = delegate<void(bool)>;
+
     DHClient() = delete;
     DHClient(DHClient&) = delete;
-    DHClient(Stack&);
-    
-    Stack& stack;
-    void negotiate(); // --> offer
-    inline void on_config(On_config handler){
-      config_handler = handler;
-    }
-    
+    DHClient(Stack& inet);
+
+    // negotiate with local DHCP server
+    void negotiate(uint32_t timeout_secs);
+
+    // Signal indicating the result of DHCP negotation
+    // timeout is true if the negotiation timed out
+    void on_config(config_func handler)
+    {  config_handlers_.push_back(handler);  }
+
+    // disable or enable console spam
+    void set_silent(bool sil)
+    { this->console_spam = !sil; }
+
   private:
-    void offer(Socket<UDP>&, const char* data, int len);
-    void request(Socket<UDP>&);   // --> acknowledge
-    void acknowledge(const char* data, int len);
-    
-    uint32_t  xid;
-    IP4::addr ipaddr, netmask, router, dns_server;
-    uint32_t  lease_time;
-    On_config config_handler = [](Stack&){ INFO("DHCPv4::On_config","Config complete"); };
+    void offer(UDPSocket&, const char* data, size_t len);
+    void request(UDPSocket&);   // --> acknowledge
+    void acknowledge(const char* data, size_t len);
+
+    Stack& stack;
+    uint32_t     xid;
+    IP4::addr    ipaddr, netmask, router, dns_server;
+    uint32_t     lease_time;
+    std::vector<config_func> config_handlers_;
+    Timers::id_t timeout;
+    bool  console_spam;
+    bool in_progress = false;
   };
-	
-  inline DHClient::DHClient(Stack& inet)
-    : stack(inet)  {}
 }
 
 #endif

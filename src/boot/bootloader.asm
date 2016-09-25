@@ -1,24 +1,42 @@
+;; This file is a part of the IncludeOS unikernel - www.includeos.org
+;;
+;; Copyright 2015 Oslo and Akershus University College of Applied Sciences
+;; and Alfred Bratterud
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;; 
+;;     http:;;www.apache.org/licenses/LICENSE-2.0
+;; 
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+
 USE16
-	;; Memory layout, 16-bit
-	%define _boot_segment 0x7c0 
-  
-  ;; Memory layout, 32-bit
-  %define _mode32_code_segment 0x08
-  %define _mode32_data_segment 0x10
-  
-  %define _kernel_loc   0x200000
-  %define _kernel_stack 0x200000
-	
-	;; We don't really need a stack, except for calls
-	%define _stack_segment 0x7000
-	%define _stack_pointer 0xfffe ;Within the ss, for 16 bit
+;; Memory layout, 16-bit
+%define _boot_segment 0x07c0 
+%define _vga_segment  0xb800
 
-	;; Char helpers
-	%define _CR 0x0D
-	%define _LF 0x0A
+;; Memory layout, 32-bit
+%define _mode32_code_segment 0x08
+%define _mode32_data_segment 0x10
+  
+%define _kernel_loc   0x200000
+%define _kernel_stack 0x200000
+  
+;; We don't really need a stack, except for calls
+%define _stack_segment 0x7000
+%define _stack_pointer 0xfffe ;Within the ss, for 16 bit
 
-	;; ELF offset of _start in text section
-	%define _elf_start 0x34
+;; Char helpers
+%define _CR 0x0D
+%define _LF 0x0A
+
+; ELF offset of _start in text section
+%define _elf_start 0x34
 	
 ;;; START
 ;;; We'll start at the beginning, but jump over some data
@@ -28,40 +46,42 @@ _start:
 ;;; The size of the service on disk, to be loaded at boot. (Convenient to 
 ;;; have it at the beginning, so it remains at a fixed location. )
 srv_size:
-	dd 0			
+	dd 0
 
 srv_offs:
 	dd 0
 ;;; Actual start
 boot:
-
 	;; Need to set data segment, to access strings
 	mov ax, _boot_segment	
 	mov ds, ax		
+	
+	; fast a20 enable	
+	in al, 0x92
+	or al, 2
+	out 0x92, al
 
-	mov esi,str_boot
+	;;  Clear the screen
+	call fill_screen
+
+	;;  Print the IncludeOS logo
+	mov esi, str_includeos
 	call printstr
-  
-  ; fast a20 enable
-  in al, 0x92
-  or al, 2
-  out 0x92, al
+	mov ax, 0x07
+	mov [color], ax
+	mov esi, str_literally
+	call printstr
+	
   
   ; check that it was enabled
 	test al,0
-	jz .a20_ok
-	
+	jz .a20_ok	
 	;; NOT OK
 	mov esi,str_a20_fail
 	call printstr	
 	cli
 	hlt
 .a20_ok:
-	mov esi,str_a20_ok
-	call printstr
-
-	
-	
 	call protected_mode	
 	
 protected_mode:
@@ -73,49 +93,50 @@ protected_mode:
 	mov eax,cr0
 	or al,1
 	mov cr0,eax
-	
-	;xchg bx,bx
-	;; 	jmp 0x8:$+3
 	jmp _mode32_code_segment:mode32+(_boot_segment<<4)
 
-USE16
-
-	;; %include "asm/load_os_16bit.asm"
-			
-;;; 16-bit code
-USE16
-	
-printstr:
-	mov ah,0eh
-.repeat:	
-	lodsb
-	cmp al,0
-	je .done
-	int 10h
-	jmp .repeat
+fill_screen:
+	mov bx, _vga_segment
+	mov es, bx
+	mov bx, 0
+	mov al, 0
+	mov ah, [color]	
+.fill:	
+	mov [es:bx], ax
+	add bx,2
+	cmp bx, (25*80*2)
+	jge .done
+	jmp .fill
 .done:
 	ret
 	
-;;; Print the char in %al to serial port, via BIOS int.
-;;; OBS: Only works in real mode.
-;;; OBS: In Bochs, looks like serial port must be initialized first
-print_al_serial:
-	xor edx,edx
-	mov ah,1
-	int 14h
+printstr:
+	mov bx, _vga_segment
+	mov es, bx
+	mov bx, [cursor]
+	mov ah, [color]
+.repeat:
+	lodsb
+	cmp al,0
+	je .done
+	mov [es:bx], al
+	mov [es:bx + 1], ah
+	add bx, 2
+	jmp .repeat
+.done:
+	mov [cursor], bx
 	ret
 	
-print_al_scr:
-	mov ah,0x0e
-	int 0x10	
-
-str_boot:
-	db `IncludeOS!\n\r`,0
-str_a20_ok:
-	db `A20 OK!\n\r`,0
-str_a20_fail:
-	db `A20 NOT OK\n\r`,0
-
+str_includeos:
+	db `#include <os> `,0
+str_literally:	
+	db `\/\/ Literally `,0
+str_a20_fail:	
+	db `A20 Err\n\r`,0
+cursor:				
+	dw (80 * 11 * 2) + 48
+color:
+	dw 0x0d
 	
 USE32
 ALIGN 32
@@ -155,77 +176,50 @@ mode32:
 	mov ebp,_kernel_stack
 	
 	;; Set up data segment
-	mov ds,eax
-	mov es,eax
-	mov fs,eax
-	mov gs,eax
-
+	mov ds, eax
+	mov es, eax
+	mov fs, eax
+	mov gs, eax
 	
-	;; Load LBA params
-	%define CYL   0
-	%define HEAD  0
-	%define SECT  2
-	%define HPC   1
-	%define SPT  63
-	
-	;;  OBS: By default, Qemu handles only 1 sector pr. read	
+	;; By default QEMU handles only 1 sector pr. read	
 	%define LOAD_SIZE 1 
 	
-	xor edx,edx
+	;; Number of sectors to read for the entire service
+  mov edx, [srv_size+(_boot_segment<<4)]
+	mov eax, 1
 	
-	
-	mov edx,[srv_size+(_boot_segment<<4)]
-	mov eax,1	;== ((CYL*HPC)+HEAD)*SPT+SECT-1		;
-
-	
-	;; Number of sectors to read (lets do one sector at a time)
-
+	;; Location to load kernel
 	mov edi,_kernel_loc
-
+  
 .more:
-	xor ecx, ecx
-	mov cl,LOAD_SIZE
-
-	;; Do the loading
+	mov cl, LOAD_SIZE
+  
+	;; Load 1 sector from disk
 	call ata_lba_read
 	
-	;; Increase LBA by 63 sectors
-	add eax,LOAD_SIZE
-
-	;; Increase destination by 63 sect. * sect.size
-	add edi,LOAD_SIZE*512
-
-	;; Decrement counter (srv_size) by load size
-	sub edx,LOAD_SIZE
-
+	;; Increase LBA by 1 sector
+	add eax, LOAD_SIZE
+  
+	;; Increase destination (in bytes)
+	add edi, LOAD_SIZE * 512
+  
+	;; Decrement counter (srv_size) by 1 sector
+	sub edx, LOAD_SIZE
+  
 	;; If all sectors loaded, move on, else get .more
-	cmp edx,0
-	jge .more
+	cmp edx, 0
+	jge .more  ;; jump when gequal
 	
-	;; Compute service address (kernel entry + elf-offset)
-	;; Putting this in ecx... Good idea? Don't know.
-	;; TODO: Check gnu calling conventions to see if ecx is preserved
-	xor eax,eax
-	xor ebx,ebx
-	xor ecx,ecx
-	xor edx,edx
-	xor edi,edi
-	mov ecx,[srv_offs+(_boot_segment<<4)]
-	;; add ecx,_kernel_loc // We've now placed the exact address in srv_offs.
-
-	;; A20 test
-	;; mov byte [0x10000],'!'
-	
-
+	;; Bochs breakpoint
+	;;xchg bx,bx
+  
 	;; GERONIMO!
 	;; Jump to service
-	xchg bx,bx
-	;; 	hlt
-	jmp ecx
+	call DWORD [srv_offs+(_boot_segment<<4)]
 	
+  
 	%include "boot/disk_read_lba.asm"
 	
-	
-;; BOOT SIGNATURE
+	;; BOOT SIGNATURE
 	times 510-($-$$) db 0	;
 	dw 0xAA55

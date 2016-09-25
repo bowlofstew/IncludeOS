@@ -26,7 +26,7 @@ namespace net
   int UDPv6::bottom(Packet_ptr pckt)
   {
     debug(">>> IPv6 -> UDPv6 bottom\n");
-    auto P6 = std::static_pointer_cast<PacketUDP6>(pckt);
+    auto P6 = view_packet_as<PacketUDP6>(pckt);
     
     debug(">>> src port: %u \t dst port: %u\n", P6->src_port(), P6->dst_port());
     debug(">>> length: %d   \t chksum: 0x%x\n", P6->length(), P6->checksum());
@@ -35,10 +35,10 @@ namespace net
     
     // check for listeners on dst port
     if (listeners.find(port) != listeners.end())
-    {
-      // make the call to the listener on that port
-      return listeners[port](P6);
-    }
+      {
+        // make the call to the listener on that port
+        return listeners[port](P6);
+      }
     // was not forwarded, so just return -1
     debug("... dumping packet, no listeners\n");
     return -1;
@@ -47,7 +47,7 @@ namespace net
   int UDPv6::transmit(std::shared_ptr<PacketUDP6>& pckt)
   {
     // NOTE: *** OBJECT CREATED ON STACK *** -->
-    auto original = std::static_pointer_cast<PacketIP6>(pckt);
+    auto original = view_packet_as<PacketIP6>(pckt);
     // NOTE: *** OBJECT CREATED ON STACK *** <--
     return ip6_out(original);
   }
@@ -83,7 +83,7 @@ namespace net
     // normally we would start at &icmp_echo::type, but
     // it is after all the first element of the icmp message
     memcpy(data + sizeof(UDPv6::pseudo_header), this->payload(),
-        datalen - sizeof(UDPv6::pseudo_header));
+           datalen - sizeof(UDPv6::pseudo_header));
     
     // calculate csum and free data on return
     header().chksum = net::checksum(data, datalen);
@@ -91,10 +91,10 @@ namespace net
   }
   
   std::shared_ptr<PacketUDP6> UDPv6::create(
-      Ethernet::addr ether_dest, const IP6::addr& ip6_dest, UDPv6::port_t port)
+                                            Ethernet::addr ether_dest, const IP6::addr& ip6_dest, UDPv6::port_t port)
   {
     auto packet = IP6::create(IP6::PROTO_UDP, ether_dest, ip6_dest);
-    auto udp_packet = std::static_pointer_cast<PacketUDP6> (packet);
+    auto udp_packet = view_packet_as<PacketUDP6> (packet);
     
     // set UDPv6 parameters
     udp_packet->set_src_port(666); /// FIXME: use free local port

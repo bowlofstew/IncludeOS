@@ -15,13 +15,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#pragma once
 #ifndef KERNEL_CPUID_HPP
 #define KERNEL_CPUID_HPP
 
-struct CPUID
-{
-  struct cpuid_t
-  {
+struct CPUID {
+  struct cpuid_t {
     unsigned int EAX;
     unsigned int EBX;
     unsigned int ECX;
@@ -31,6 +30,6 @@ struct CPUID
   static bool isAmdCpu();
   static bool isIntelCpu();
   static bool hasRDRAND();
-};
+}; //< CPUID
 
-#endif
+#endif //< KERNEL_CPUID_HPP

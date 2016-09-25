@@ -12,8 +12,11 @@
 *.vmdk
 *.tmp
 *.d
+*.pyc
+*.ropeproject
 nbproject
 
+src/apic_boot.bin
 src/bootloader
 src/TAGS
 
@@ -30,3 +33,7 @@ vmbuild/vmbuild
 *.gz
 
 .DS_Store
+
+/.vagrant
+/examples/demo_service/IncludeOS_Demo_Service
+/seed/My_Service
